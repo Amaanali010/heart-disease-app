@@ -1,12 +1,15 @@
 """
 Heart Disease Risk Screening - Streamlit app
-Loads two models trained on the CDC BRFSS "Personal Key Indicators of Heart Disease" data:
+Loads up to three models trained on the CDC BRFSS "Personal Key Indicators of Heart Disease" data:
   - Logistic Regression  (models/heart_logreg_model.pkl)
   - LightGBM             (models/heart_lgbm_model.pkl)
+  - XGBoost              (models/heart_xgb_model.pkl)
+Any model whose file is missing is simply left out of the menu.
 Educational project. NOT a medical device and NOT medical advice.
 """
 import pickle
 import warnings
+from importlib.metadata import PackageNotFoundError, version as pkg_version
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +28,7 @@ BASE_DIR = Path(__file__).parent
 MODEL_FILES = {
     "Logistic Regression": "heart_logreg_model.pkl",
     "LightGBM": "heart_lgbm_model.pkl",
+    "XGBoost": "heart_xgb_model.pkl",
 }
 
 
@@ -82,20 +86,30 @@ if not loaded:
     st.stop()
 
 options = list(loaded.keys())
-if len(loaded) == 2:
-    options.append("Compare both")
+COMPARE = "Compare all models"
+if len(loaded) >= 2:
+    options.append(COMPARE)
 choice = st.sidebar.radio("Which model?", options)
 
 missing = [name for name in MODEL_FILES if name not in loaded]
 if missing:
     st.sidebar.warning("Not available: " + ", ".join(missing))
 
+# Warn if a library version differs from the one used for training (pickles are version-sensitive)
+LIBS = {"sklearn": "scikit-learn", "xgboost": "xgboost", "lightgbm": "lightgbm"}
 for name, art in loaded.items():
-    saved = art.get("versions", {}).get("sklearn")
-    if saved and saved != sklearn.__version__:
-        st.sidebar.warning(
-            f"{name} was saved with scikit-learn {saved}, but this app runs {sklearn.__version__}. "
-            "Results may be wrong. Pin the same version in requirements.txt.")
+    for key, dist in LIBS.items():
+        saved = art.get("versions", {}).get(key)
+        if not saved:
+            continue
+        try:
+            installed = pkg_version(dist)
+        except PackageNotFoundError:
+            continue
+        if saved != installed:
+            st.sidebar.warning(
+                f"{name} was saved with {dist} {saved}, but this app runs {installed}. "
+                "Results may be wrong. Pin the same version in requirements.txt.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Educational project built on a self-reported CDC survey. "
@@ -154,7 +168,7 @@ with tab_predict:
             "PhysicalActivity": activity, "GenHealth": gen_health, "SleepTime": sleep,
             "Asthma": asthma, "KidneyDisease": kidney, "SkinCancer": skin,
         }
-        to_show = list(loaded.keys()) if choice == "Compare both" else [choice]
+        to_show = list(loaded.keys()) if choice == COMPARE else [choice]
 
         st.markdown("### Result")
         cols = st.columns(len(to_show))
@@ -177,8 +191,8 @@ with tab_predict:
                 else:
                     st.success("✅ **Lower risk** - the score is below the threshold.")
 
-        if len(results) == 2 and len(set(results.values())) == 2:
-            st.info("The two models disagree for this person. Treat the result as uncertain.")
+        if len(results) >= 2 and len(set(results.values())) > 1:
+            st.info("The models disagree for this person. Treat the result as uncertain.")
 
         st.warning(
             "**Please read:** this is a screening-style estimate from a self-reported survey, not a diagnosis. "
@@ -203,7 +217,8 @@ with tab_about:
     st.table(pd.DataFrame(rows))
     st.markdown(
         "- **Logistic Regression:** simple and explainable; ranks people nearly as well as LightGBM.\n"
-        "- **LightGBM:** gradient-boosted trees; slightly higher ROC-AUC.\n"
+        "- **LightGBM** and **XGBoost:** gradient-boosted trees; both score slightly higher than Logistic "
+        "Regression, and about the same as each other.\n"
         "- **ROC-AUC** is the chance the model gives a sick person a higher score than a healthy person "
         "(0.5 = coin flip, 1.0 = perfect).\n"
         "- **Threshold:** the score above which a person is labelled *higher risk*. It was tuned to favour "
